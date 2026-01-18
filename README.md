@@ -1,247 +1,269 @@
+# 🔐 FINAL MASTER PROMPT — REST-ONLY EFPE SAAS (KEY RELEASE + C# DLL)
+
+---
+
 ## Role & Context
 
-You are a **principal cloud security architect with 20+ years of experience** designing **multi-tenant cryptographic SaaS platforms** for **banking, fintech, and regulated enterprises**.
+You are a **principal security architect with 20+ years of experience** in **banking systems, cryptographic services, and regulated SaaS platforms**.
 
-Design a **multi-tenant EFPE (Element / Field-Level Format-Preserving Encryption) SaaS platform** that provides:
+Design a **multi-tenant EFPE (Element / Field-Level Format-Preserving Encryption) SaaS platform** with the following strict constraints:
 
-* Centralized **key management**
-* Centralized **policy governance**
-* Client-side **EFPE encryption/decryption via SDK/DLL**
-* **Key revocation, disablement, and re-issuance**
-* **Per-tenant audit logging**
-* **Secure telemetry reporting from client SDKs**
-
-The SaaS platform **must never receive or process customer plaintext or ciphertext**.
+* The platform is **100% REST-based**
+* **No UI**, **no React**, **no frontend ecosystem**
+* The SaaS acts as a **Key Release & Policy Control Plane**
+* **All encryption and decryption are performed locally** by a **C# DLL**
+* The SaaS **never receives plaintext or ciphertext**
+* The system must support **software-based HSM initially**, with a **clear migration path to hardware HSM**
 
 ---
 
-## 1️⃣ SaaS Trust Model (Non-Negotiable)
+## 1️⃣ High-Level Operating Model
 
-### Explicit Trust Boundary
+### Responsibilities Split (Non-Negotiable)
 
-```
-Tenant Environment (Data stays here)
- ├─ Application
- ├─ EFPE SDK / DLL
- │    ├─ Local Encrypt / Decrypt
- │    └─ Telemetry Agent
- │
- └───── Secure Auth Channel ─────► EFPE SaaS
-                                  (Keys, Policy, Audit, Telemetry)
-```
-
-* Encryption & decryption **always local**
-* SaaS **never sees sensitive values**
-* Telemetry **never includes plaintext or ciphertext**
+| Component          | Responsibility                          |
+| ------------------ | --------------------------------------- |
+| EFPE SaaS (REST)   | Key lifecycle, policy, audit, telemetry |
+| Tenant Application | Business logic                          |
+| Tenant EFPE C# DLL | Encrypt / Decrypt locally               |
+| HSM (Soft → Hard)  | Key generation & protection             |
 
 ---
 
-## 2️⃣ Key Lifecycle Management (Extended Requirement)
+## 2️⃣ EFPE SaaS — REST-Only Key Release Service
 
-### Key States (Mandatory)
+### Mandatory Characteristics
 
-Each **tenant data encryption key (DEK)** must support:
+* Pure **REST APIs**
+* Stateless
+* JSON over HTTPS
+* OAuth2 / mTLS authentication
+* No UI
+* No SDK logic inside SaaS
+* No encryption operations inside SaaS
 
-| State       | Meaning                          |
-| ----------- | -------------------------------- |
-| ACTIVE      | Normal encrypt/decrypt           |
-| DISABLED    | Decrypt only (no new encryption) |
-| REVOKED     | No encrypt, no decrypt           |
-| EXPIRED     | Auto-rotation required           |
-| COMPROMISED | Immediate kill + alert           |
+### SaaS MUST Provide
 
-### Required Capabilities
-
-* Disable keys **instantly**
-* Re-issue new keys per tenant
-* Support **multiple active key versions**
-* Enforce **forward encryption with latest key**
-* Allow **backward decryption** (configurable grace window)
-* Support **crypto-shredding** on tenant off-boarding
-
-⚠ Raw keys must **never** be exposed to tenants.
-
----
-
-## 3️⃣ Key Revocation & Re-Issuance Flow
-
-Design flows for:
-
-1. Tenant requests key disable
-2. SaaS marks key as DISABLED
-3. SDK refuses encryption using disabled key
-4. Tenant requests new key
-5. SaaS issues **new wrapped / derived key**
-6. SDK switches automatically
-7. Old key allowed only for decrypt (policy-controlled)
-
-Include:
-
-* Emergency revoke (breach scenario)
-* Scheduled rotation
-* Forced rotation (policy breach)
-
----
-
-## 4️⃣ Audit Logging (Per-Tenant, Mandatory)
-
-### Audit Scope (SaaS Side)
-
-Audit **must record**:
-
-* Tenant ID
-* Key ID & version
-* Key state changes (enable / disable / revoke)
-* Policy changes
-* SDK authentication events
-* Rotation events
-* Admin actions (who, when, why)
-
-Audit logs must be:
-
-* Immutable
-* Tenant-isolated
-* Time-stamped
-* Exportable (SIEM-friendly)
-
----
-
-## 5️⃣ Client SDK Telemetry (New Requirement)
-
-### Telemetry Goals
-
-Track **usage without data exposure**.
-
-### Telemetry Events (Allowed)
-
-✔ Encrypt operation count
-✔ Decrypt operation count
-✔ Field identifier (logical name only)
-✔ Key version used
-✔ Policy ID
-✔ Timestamp
-✔ SDK version
-✔ Application ID
-✔ Result (success / failure)
-
-❌ Plaintext
-❌ Ciphertext
-❌ Keys
-❌ Tweak values
-
----
-
-## 6️⃣ Telemetry Architecture (Mandatory)
-
-![Image](https://d2908q01vomqb2.cloudfront.net/22d200f8670dbdb3e253a90eee5098477c95c23d/2019/11/11/EncryptBoundaries-Solution-for-social.jpg)
-
-![Image](https://cdn.prod.website-files.com/61e1d8dcf4a5e16aab73f6b4/6436e9bfbeddc4675120b39b_wq254ajZtWmn8aW9PuBbyJHbfSSlNhzwF9MGE1_O7BLXSKiKLnawEWrNxQvMqTxGDc3urzzyn-thWbda7aFLyWfIgJe61eOY98MgfG-Gb-uLJQ5Sl4uHuQe8cSnP5w0atgJDJmFALF_6nTYXZoQEZuw.png)
-
-![Image](https://media.geeksforgeeks.org/wp-content/uploads/20240826122436/Multi-Tenancy-Architecture---System-Design.webp)
-
-### Flow
-
-1. SDK authenticates to SaaS
-2. SDK performs local encrypt/decrypt
-3. SDK emits **signed telemetry event**
-4. SaaS validates & stores telemetry
-5. Telemetry linked to tenant + key + policy
-
-### Requirements
-
-* Telemetry is **async & non-blocking**
-* Failure to send telemetry **must not break encryption**
-* Events must be **tamper-evident** (HMAC / signature)
-* Rate-limited per tenant
-
----
-
-## 7️⃣ Telemetry Abuse & Privacy Controls
-
-Design controls to:
-
-* Prevent telemetry flooding
-* Detect abnormal encryption volume
-* Alert on suspicious decrypt spikes
-* Support tenant opt-in / opt-out levels
-* Meet data-minimization principles (GDPR-safe)
-
----
-
-## 8️⃣ SDK Enforcement Rules
-
-SDK must enforce:
-
-* No encryption with DISABLED / REVOKED keys
-* Mandatory policy validation before operation
-* Automatic key refresh on state change
-* Local in-memory key caching only
-* Secure key zeroization on revoke
-
----
-
-## 9️⃣ SaaS APIs (Extended)
-
-Design APIs for:
-
-* Key issue / disable / revoke
-* Key re-issuance
-* Policy retrieval
-* SDK authentication
+* Key issuance (wrapped / derived keys)
+* Key disable / revoke / re-issue
+* Policy distribution
+* Key version resolution
+* Audit log access
 * Telemetry ingestion
-* Audit log retrieval
-* Key usage analytics
+
+### SaaS MUST NOT Provide
+
+❌ Any UI
+❌ Any frontend frameworks
+❌ Any encryption / decryption
+❌ Any data storage for customer data
+
+---
+
+## 3️⃣ Key Management Model (Critical)
+
+### Key Types
+
+* **Tenant Master Key (TMK)** – HSM-protected, never leaves SaaS
+* **Data Encryption Keys (DEK)** – issued to tenants in **wrapped or derived form**
+* **Key Versions** – mandatory
+
+### Key States
+
+| State       | Behavior          |
+| ----------- | ----------------- |
+| ACTIVE      | Encrypt + Decrypt |
+| DISABLED    | Decrypt only      |
+| REVOKED     | No usage          |
+| EXPIRED     | Rotation required |
+| COMPROMISED | Immediate kill    |
+
+---
+
+## 4️⃣ Software-Based HSM (Phase-1) with Hardware Path
+
+### Phase-1 (Mandatory)
+
+* Software-based HSM / KMS abstraction
+* AES-256 keys
+* Non-exportable logical model
+* Centralized key lifecycle control
+
+### Phase-2 (Planned)
+
+* Drop-in replacement with:
+
+  * Thales
+  * Azure Managed HSM
+  * AWS CloudHSM
+* No API contract changes
+* No tenant impact
+
+> Design **KeyProvider abstraction** so that:
+>
+> * Software HSM = implementation
+> * Hardware HSM = configuration change
+
+---
+
+## 5️⃣ Key Release API (REST Only)
+
+Design REST APIs such as:
+
+* `POST /keys/issue`
+* `POST /keys/disable`
+* `POST /keys/revoke`
+* `POST /keys/reissue`
+* `GET  /keys/{id}/status`
+* `GET  /policies/{field}`
+* `POST /telemetry`
+* `GET  /audit`
 
 All APIs must be:
 
 * Tenant-scoped
-* Authenticated
-* Audited
+* Fully auditable
 * Rate-limited
+* Idempotent where applicable
 
 ---
 
-## 🔟 Compliance & Audit Positioning
+## 6️⃣ C# EFPE DLL (Tenant Side)
 
-Explain how:
+### DLL Responsibilities
 
-* Key revocation satisfies breach response
-* Telemetry supports forensic investigations
-* Audit logs meet RBI / PCI expectations
-* SaaS never becomes a data processor
-* Tenants retain full data ownership
+* Authenticate with EFPE SaaS (REST)
+* Fetch policy
+* Fetch wrapped / derived DEKs
+* Cache keys **in memory only**
+* Perform FF1 / FF3-1 encryption
+* Perform FF1 / FF3-1 decryption
+* Enforce key state rules
+* Emit telemetry events
+
+### DLL Must Support
+
+* Multiple SaaS endpoints
+* Failover between servers
+* Region-based endpoint selection
+* Configuration-driven routing
+
+Example:
+
+```json
+{
+  "PrimaryEndpoint": "https://kms.region1.example.com",
+  "SecondaryEndpoint": "https://kms.region2.example.com",
+  "TimeoutMs": 3000,
+  "RetryCount": 3
+}
+```
 
 ---
 
-## 1️⃣1️⃣ Deliverables Expected
+## 7️⃣ Cryptography (Unchanged, Mandatory)
+
+* NIST SP 800-38G
+* FF1 (primary)
+* FF3-1 (optional)
+* AES-256
+* Deterministic + tweak-based
+* No deprecated FF3
+
+---
+
+## 8️⃣ Telemetry (From C# DLL Only)
+
+### Telemetry Must Capture
+
+✔ Encrypt count
+✔ Decrypt count
+✔ Field identifier
+✔ Key ID & version
+✔ Policy ID
+✔ Timestamp
+✔ DLL version
+✔ Endpoint used
+
+### Telemetry Must NEVER Capture
+
+❌ Plaintext
+❌ Ciphertext
+❌ Keys
+❌ Tweaks
+
+Telemetry is:
+
+* Asynchronous
+* Signed / tamper-evident
+* Non-blocking
+
+---
+
+## 9️⃣ Audit Logging (SaaS Side)
+
+Audit must track:
+
+* Key issuance
+* Key disable / revoke
+* Key re-issuance
+* Policy changes
+* SDK authentication
+* Telemetry ingestion
+* Admin actions
+
+Logs must be:
+
+* Immutable
+* Tenant-isolated
+* Exportable (SIEM)
+
+---
+
+## 🔟 Key Disable & Re-Issuance (Explicit Requirement)
+
+Design flows such that:
+
+* Any issued DEK can be **disabled instantly**
+* Disabled keys:
+
+  * Cannot encrypt
+  * May decrypt (policy-controlled)
+* New DEKs can be issued at any time
+* DLL automatically switches to newest key
+* Old keys honored only per policy
+
+---
+
+## 1️⃣1️⃣ Compliance Positioning
+
+Explain how this REST-only, DLL-based model:
+
+* Meets RBI expectations
+* Meets PCI DSS key management rules
+* Avoids SaaS data processing liability
+* Supports forensic investigation
+* Enables tenant-controlled cryptography
+
+---
+
+## 1️⃣2️⃣ Deliverables Expected
 
 Produce:
 
-1. SaaS architecture
+1. REST-only SaaS architecture
 2. Key lifecycle state machine
-3. Revocation & rotation flows
-4. Client SDK telemetry design
-5. Audit log schema
-6. Threat model
-7. Compliance justification
-8. Explicit security trade-offs
+3. Software-to-hardware HSM migration design
+4. C# EFPE DLL architecture
+5. Multi-endpoint configuration strategy
+6. Telemetry schema
+7. Audit schema
+8. Threat model
+9. Explicit security trade-offs
 
 ---
 
-## 1️⃣2️⃣ Final Instruction
+## ✅ Final Instruction
 
-> **Design a multi-tenant EFPE SaaS platform that provides cryptographic key governance, policy enforcement, revocation, audit logging, and secure telemetry, while ensuring that all encryption and decryption are performed locally by client SDKs and that sensitive data never leaves tenant environments.**
+> **Design a REST-only, multi-tenant EFPE SaaS platform that releases and governs encryption keys using a software-based HSM (with hardware HSM roadmap), while all encryption and decryption are performed locally by a configurable C# DLL that supports multi-server connectivity, key revocation, audit logging, and secure telemetry — without any UI or frontend components.**
 
----
-
-## 🧠 My Professional Opinion (Very Direct)
-
-Superadmin, with **key disable + telemetry**, your platform becomes:
-
-✔ A **true cryptographic control plane**
-✔ Suitable for **banking, fintech, SaaS vendors**
-✔ Stronger than centralized encryption services
-✔ Easier to defend in audits
-✔ Commercially differentiated
-
-This is **exactly how modern regulated crypto-SaaS should be built**.
